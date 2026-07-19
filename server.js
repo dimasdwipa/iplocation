@@ -24,6 +24,10 @@ function getClientIp(req) {
     }
     return ip;
 }
+// Root route for Railway public domain access
+app.get('/', (req, res) => {
+    res.redirect('/track?user_id=DEMO001');
+});
 
 // Handle the tracking link
 app.get('/track', async (req, res) => {
@@ -117,7 +121,8 @@ app.get('/admin/data', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Tracking server running on http://localhost:${PORT}`);
+    console.log(`Tracking server running on port ${PORT}`);
+    console.log(`App accessible via Railway domain`);
     console.log(`Test link: http://localhost:${PORT}/track?user_id=EMP001`);
     console.log(`Admin Data link: http://localhost:${PORT}/admin/data`);
 });
