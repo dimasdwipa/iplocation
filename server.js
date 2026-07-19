@@ -116,7 +116,7 @@ app.get('/admin/data', (req, res) => {
     res.json(cleanData);
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`Tracking server running on http://localhost:${PORT}`);
     console.log(`Test link: http://localhost:${PORT}/track?user_id=EMP001`);
     console.log(`Admin Data link: http://localhost:${PORT}/admin/data`);
