@@ -350,26 +350,46 @@ app.post('/api/location', async (req, res) => {
     try {
         if (latitude && longitude) {
             console.log("GPS received:", latitude, longitude);
+            
+            // Initialize location history if it doesn't exist
+            if (!session.location_history) {
+                session.location_history = [];
+            }
+            
+            // Push the new coordinate to history
+            const timestamp = req.body.timestamp || Date.now();
+            session.location_history.push({
+                latitude,
+                longitude,
+                timestamp: new Date(timestamp).toISOString()
+            });
+
+            // Keep the flat fields updated with the LATEST known position
             session.gps = `${latitude}, ${longitude}`;
-            console.log(`[Location Updated] Session: ${sessionId}, Method: GPS`);
-            
-            const geo = await reverseGeocode(latitude, longitude);
-            session.gps_address = geo.gps_address;
-            session.gps_city = geo.gps_city;
-            session.gps_region = geo.gps_region;
-            session.gps_country = geo.gps_country;
-            
-            session.final_city = geo.gps_city !== 'Unknown' ? geo.gps_city : session.ip_city;
-            session.final_region = geo.gps_region !== 'Unknown' ? geo.gps_region : session.ip_region;
-            session.final_country = geo.gps_country !== 'Unknown' ? geo.gps_country : session.ip_country;
             session.location_source = "GPS";
-        } else if (error) {
+            console.log(`[Location Updated] Session: ${sessionId}, Method: GPS, Total Points: ${session.location_history.length}`);
+            
+            // We only need to reverse geocode if this is the FIRST time we got GPS (to save API calls)
+            // or if they have moved significantly (for simplicity in this POC, we check if it's "Pending...")
+            if (session.gps_address === "Pending...") {
+                const geo = await reverseGeocode(latitude, longitude);
+                session.gps_address = geo.gps_address;
+                session.gps_city = geo.gps_city;
+                session.gps_region = geo.gps_region;
+                session.gps_country = geo.gps_country;
+                
+                session.final_city = geo.gps_city !== 'Unknown' ? geo.gps_city : session.ip_city;
+                session.final_region = geo.gps_region !== 'Unknown' ? geo.gps_region : session.ip_region;
+                session.final_country = geo.gps_country !== 'Unknown' ? geo.gps_country : session.ip_country;
+            }
+        } else if (error && !session.location_history) {
+            // Only set to denied if they NEVER provided location history
             session.gps = "denied or unavailable";
             session.gps_address = "denied or unavailable";
             session.location_source = "IP";
             console.log(`[Location Denied/Failed] Session: ${sessionId}, Error: ${error}`);
-        } else {
-            // Failsafe in case nothing was passed
+        } else if (!session.location_history) {
+            // Failsafe in case nothing was passed and we have no history
             session.gps = "denied or unavailable";
             session.gps_address = "denied or unavailable";
             session.location_source = "IP";
