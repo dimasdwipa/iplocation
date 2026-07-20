@@ -176,6 +176,8 @@ app.get('/track', async (req, res) => {
         final_region: region,
         final_country: country,
         location_source: "IP",
+        status: "pending",
+        clientSessionKey: null,
         device_profile: {
             device_type: "Unknown",
             brand: "Unknown",
@@ -217,15 +219,52 @@ app.get('/track', async (req, res) => {
 // Endpoint to receive geolocation AND rich device profile
 app.post('/api/location', async (req, res) => {
     console.log("API LOCATION HIT:", req.body);
-    const { sessionId, latitude, longitude, error, deviceData } = req.body;
+    const { sessionId, clientSessionKey, status, latitude, longitude, error, deviceData } = req.body;
     
-    const session = trackingData.find(s => s.sessionId === sessionId);
+    let session = null;
+    
+    // Duplicate Prevention Logic
+    if (clientSessionKey) {
+        // Try to find an existing session for this exact client browser tab
+        const existingSession = trackingData.find(s => s.clientSessionKey === clientSessionKey);
+        
+        if (existingSession) {
+            session = existingSession;
+            console.log(`[Session Reused] ClientKey: ${clientSessionKey}`);
+            
+            // Clean up the dummy pending session created by this new GET /track load
+            if (sessionId && sessionId !== session.sessionId) {
+                const idx = trackingData.findIndex(s => s.sessionId === sessionId && s.status === 'pending');
+                if (idx !== -1) {
+                    trackingData.splice(idx, 1);
+                    console.log(`[Duplicate Cleaned] Removed redundant pending session: ${sessionId}`);
+                }
+            }
+        }
+    }
+
+    // Fallback if no existing session was found (first time POST)
+    if (!session) {
+        session = trackingData.find(s => s.sessionId === sessionId);
+    }
+    
     if (!session) {
         console.log("Session NOT FOUND:", sessionId);
         return res.status(404).json({ success: false, message: 'Session not found' });
     }
 
-    console.log("Session found:", sessionId);
+    // Assign client key on first connect
+    if (clientSessionKey && !session.clientSessionKey) {
+        session.clientSessionKey = clientSessionKey;
+    }
+    
+    // Update lifecycle status
+    if (status) {
+        session.status = status;
+        console.log(`[Session Status] ${session.sessionId} -> ${status}`);
+    } else if (session.status === 'pending') {
+        session.status = 'active';
+    }
 
     // Block 1: Device Profile Enrichment (Wrapped in try/catch to prevent crashes)
     try {
@@ -406,7 +445,12 @@ app.post('/api/location', async (req, res) => {
 
 // Admin endpoint to view structured data
 app.get('/admin/data', (req, res) => {
-    const cleanData = trackingData.map(({ sessionId, ...rest }) => rest);
+    const showAll = req.query.all === 'true';
+    
+    // Filter out abandoned/pending sessions by default
+    const activeData = trackingData.filter(s => showAll || (s.status !== 'pending' && s.status !== 'abandoned'));
+    
+    const cleanData = activeData.map(({ sessionId, clientSessionKey, ...rest }) => rest);
     res.json(cleanData);
 });
 
