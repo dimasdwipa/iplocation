@@ -443,14 +443,146 @@ app.post('/api/location', async (req, res) => {
     res.json({ success: true });
 });
 
-// Admin endpoint to view structured data
+// --- Helper functions for Admin Data Merging ---
+
+function scoreDeviceProfileRichness(profile) {
+    if (!profile) return -1;
+    let score = 0;
+    if (profile.ua_source !== 'NONE') score += 10;
+    if (profile.ua_source === 'UA-CH') score += 20; // Highest quality
+    if (profile.device_model_confidence === 'HIGH') score += 15;
+    
+    const fields = Object.values(profile);
+    for (const val of fields) {
+        if (val !== 'Unknown' && val !== '' && val !== null && val !== 0 && (!Array.isArray(val) || val.length > 0)) {
+            score += 1;
+        }
+    }
+    return score;
+}
+
+function chooseLatestMeaningfulValue(a, b) {
+    const isMeaningless = (val) => !val || val === 'Unknown' || val === 'Pending...' || val === 'denied or unavailable' || val === 'error';
+    if (isMeaningless(a)) return b;
+    if (isMeaningless(b)) return a;
+    return b; // Assumes 'b' is the newer record in chronological processing array
+}
+
+function mergeLocationHistory(historyArrays) {
+    const combined = [];
+    for (const arr of historyArrays) {
+        if (Array.isArray(arr)) combined.push(...arr);
+    }
+    
+    // Deduplicate by timestamp and lat/lon
+    const unique = [];
+    const seen = new Set();
+    for (const pt of combined) {
+        const key = `${pt.timestamp}_${pt.latitude}_${pt.longitude}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(pt);
+        }
+    }
+    
+    return unique.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
+function chooseBestStatus(statuses) {
+    if (statuses.includes('active')) return 'active';
+    if (statuses.includes('hidden')) return 'hidden';
+    if (statuses.includes('completed')) return 'completed';
+    if (statuses.includes('pending')) return 'pending';
+    return 'abandoned';
+}
+
+// Admin endpoint to view structured data safely merged
 app.get('/admin/data', (req, res) => {
     const showAll = req.query.all === 'true';
     
     // Filter out abandoned/pending sessions by default
     const activeData = trackingData.filter(s => showAll || (s.status !== 'pending' && s.status !== 'abandoned'));
     
-    const cleanData = activeData.map(({ sessionId, clientSessionKey, ...rest }) => rest);
+    // Group by device_profile_id + user_id
+    const groups = {};
+    const unmergable = [];
+    
+    for (const session of activeData) {
+        const dpId = session.device_profile?.device_profile_id;
+        
+        // If missing or Unknown, do not merge blindly
+        if (!dpId || dpId === 'Unknown') {
+            unmergable.push({ ...session });
+            continue;
+        }
+        
+        // Group key uses both user_id and device_profile_id to prevent cross-user merging
+        const groupKey = `${session.user_id}_${dpId}`;
+        if (!groups[groupKey]) {
+            groups[groupKey] = [];
+        }
+        groups[groupKey].push(session);
+    }
+    
+    const mergedData = [];
+    
+    for (const groupKey in groups) {
+        const cluster = groups[groupKey];
+        if (cluster.length === 1) {
+            const single = { ...cluster[0] };
+            single.merged_session_count = 1;
+            mergedData.push(single);
+            continue;
+        }
+        
+        const merged = { ...cluster[0] }; 
+        const historyArrays = [];
+        const statuses = [];
+        let bestProfileScore = -1;
+        const mergedFromIds = [];
+        
+        for (const s of cluster) {
+            mergedFromIds.push(s.sessionId);
+            statuses.push(s.status);
+            if (s.location_history) historyArrays.push(s.location_history);
+            
+            merged.ip = chooseLatestMeaningfulValue(merged.ip, s.ip);
+            merged.ip_city = chooseLatestMeaningfulValue(merged.ip_city, s.ip_city);
+            merged.ip_region = chooseLatestMeaningfulValue(merged.ip_region, s.ip_region);
+            merged.ip_country = chooseLatestMeaningfulValue(merged.ip_country, s.ip_country);
+            merged.isp = chooseLatestMeaningfulValue(merged.isp, s.isp);
+            
+            merged.gps = chooseLatestMeaningfulValue(merged.gps, s.gps);
+            merged.gps_address = chooseLatestMeaningfulValue(merged.gps_address, s.gps_address);
+            merged.gps_city = chooseLatestMeaningfulValue(merged.gps_city, s.gps_city);
+            merged.gps_region = chooseLatestMeaningfulValue(merged.gps_region, s.gps_region);
+            merged.gps_country = chooseLatestMeaningfulValue(merged.gps_country, s.gps_country);
+            
+            merged.final_city = chooseLatestMeaningfulValue(merged.final_city, s.final_city);
+            merged.final_region = chooseLatestMeaningfulValue(merged.final_region, s.final_region);
+            merged.final_country = chooseLatestMeaningfulValue(merged.final_country, s.final_country);
+            merged.location_source = chooseLatestMeaningfulValue(merged.location_source, s.location_source);
+            
+            const pScore = scoreDeviceProfileRichness(s.device_profile);
+            if (pScore > bestProfileScore) {
+                bestProfileScore = pScore;
+                merged.device_profile = s.device_profile;
+            }
+        }
+        
+        merged.location_history = mergeLocationHistory(historyArrays);
+        merged.status = chooseBestStatus(statuses);
+        merged.merged_session_count = cluster.length;
+        merged.merged_from_session_ids = mergedFromIds; // Debugging tracking
+        
+        mergedData.push(merged);
+    }
+    
+    const finalData = [...mergedData, ...unmergable];
+    
+    // Strip raw internal identifiers for clean output
+    const cleanData = finalData.map(({ sessionId, clientSessionKey, ...rest }) => rest);
+    
     res.json(cleanData);
 });
 
