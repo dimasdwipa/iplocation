@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const DeviceDetector = require('device-detector-js');
+const UAParser = require('ua-parser-js');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -157,7 +158,7 @@ app.get('/track', async (req, res) => {
     const { city, region, country, isp } = await getGeoLocation(ip);
     const sessionId = Date.now().toString() + Math.random().toString(36).substring(2, 8);
     
-    // Initial session setup (Device Profile will be populated via POST from client-side UA-CH enrichment)
+    // Initial session setup with empty device_profile schema to prevent null
     const sessionData = {
         sessionId,
         user_id: userId,
@@ -175,7 +176,32 @@ app.get('/track', async (req, res) => {
         final_region: region,
         final_country: country,
         location_source: "IP",
-        device_profile: null // Will be enriched
+        device_profile: {
+            device_type: "Unknown",
+            brand: "Unknown",
+            model: "Unknown",
+            marketing_name: "Unknown",
+            os: "Unknown",
+            os_version: "Unknown",
+            browser: "Unknown",
+            browser_version: "Unknown",
+            platform: "Unknown",
+            platform_version: "Unknown",
+            architecture: "Unknown",
+            bitness: "Unknown",
+            form_factors: [],
+            screen: "Unknown",
+            device_pixel_ratio: 1,
+            language: "Unknown",
+            timezone: "Unknown",
+            touch_points: 0,
+            hardware_concurrency: "Unknown",
+            device_memory_gb: "Unknown",
+            network_type: "Unknown",
+            ua_source: "NONE",
+            device_model_confidence: "LOW",
+            device_profile_id: "Unknown"
+        }
     };
 
     trackingData.push(sessionData);
@@ -201,127 +227,158 @@ app.post('/api/location', async (req, res) => {
 
     console.log("Session found:", sessionId);
 
-    // Process Device Profile Enrichment
-    if (deviceData) {
-        // Parse User-Agent using DeviceDetector
-        const uaString = req.headers['user-agent'] || '';
-        const detector = new DeviceDetector();
-        const uaResult = detector.parse(uaString);
-
-        const deviceBrand = (uaResult.device && uaResult.device.brand) ? uaResult.device.brand : 'Unknown';
-        const osName = (uaResult.os && uaResult.os.name) ? uaResult.os.name : 'Unknown';
-        const deviceStr = `${deviceBrand} / ${osName}`;
-        const browserStr = (uaResult.client && uaResult.client.name) ? uaResult.client.name : 'Unknown';
-        let browser_version = 'Unknown', platform = 'Unknown';
-        let architecture = 'Unknown', bitness = 'Unknown', platform_version = 'Unknown';
-        let form_factors = [];
-        let device_type = 'desktop';
-        let ua_source = 'UA-PARSER';
-        let confidence = 'LOW';
-
-        // Check if UA-CH provided data
-        if (deviceData.uach && Object.keys(deviceData.uach).length > 0) {
-            console.log(`[Device Profiling] UA-CH supported for session ${sessionId}`);
-            ua_source = 'UA-CH';
-            const ch = deviceData.uach;
+    // Block 1: Device Profile Enrichment (Wrapped in try/catch to prevent crashes)
+    try {
+        if (deviceData) {
+            const rawUA = deviceData.userAgent || '';
             
-            architecture = ch.architecture || 'Unknown';
-            bitness = ch.bitness || 'Unknown';
-            model = ch.model || 'Unknown';
-            platform = ch.platform || 'Unknown';
-            platform_version = ch.platformVersion || 'Unknown';
-            form_factors = ch.formFactors || [];
+            // Priority C: device-detector-js (Best for Android generic mapping)
+            const detector = new DeviceDetector();
+            const ddResult = detector.parse(rawUA);
             
-            // Extract best brand from brands array
-            if (ch.brands && ch.brands.length > 0) {
-                const validBrand = ch.brands.find(b => !b.brand.includes('Not') && !b.brand.includes('Brand'));
-                if (validBrand) {
-                    browser = validBrand.brand;
-                    browser_version = validBrand.version;
+            // Priority B: ua-parser-js (Best for standard OS/Browser names and Safari)
+            const parser = new UAParser(rawUA);
+            const uapResult = parser.getResult();
+
+            let brand = 'Unknown', model = 'Unknown', os = 'Unknown', os_version = 'Unknown';
+            let browser = 'Unknown', browser_version = 'Unknown', platform = 'Unknown';
+            let architecture = 'Unknown', bitness = 'Unknown', platform_version = 'Unknown';
+            let form_factors = [];
+            let device_type = 'desktop';
+            let ua_source = 'UA-PARSER';
+            let confidence = 'LOW';
+
+            // 1. Fill base layers with Priority C (device-detector-js)
+            if (ddResult.device) {
+                brand = ddResult.device.brand || 'Unknown';
+                model = ddResult.device.model || 'Unknown';
+                device_type = ddResult.device.type || 'desktop';
+            }
+            if (ddResult.os) {
+                os = ddResult.os.name || 'Unknown';
+                os_version = ddResult.os.version || 'Unknown';
+            }
+            if (ddResult.client) {
+                browser = ddResult.client.name || 'Unknown';
+                browser_version = ddResult.client.version || 'Unknown';
+            }
+
+            // 2. Enhance with Priority B (ua-parser-js)
+            if (brand === 'Unknown') brand = uapResult.device.vendor || 'Unknown';
+            if (model === 'Unknown') model = uapResult.device.model || 'Unknown';
+            if (os === 'Unknown') os = uapResult.os.name || 'Unknown';
+            if (os_version === 'Unknown') os_version = uapResult.os.version || 'Unknown';
+            if (browser === 'Unknown') browser = uapResult.browser.name || 'Unknown';
+            if (browser_version === 'Unknown') browser_version = uapResult.browser.version || 'Unknown';
+            if (device_type === 'desktop') device_type = uapResult.device.type || 'desktop'; // If still generic desktop, allow UAParser to override
+
+            // 3. Absolute Override with Priority A (UA-CH) if available
+            if (deviceData.uach && Object.keys(deviceData.uach).length > 0) {
+                console.log(`[Device Profiling] UA-CH supported for session ${sessionId}`);
+                ua_source = 'UA-CH';
+                const ch = deviceData.uach;
+                
+                architecture = ch.architecture || 'Unknown';
+                bitness = ch.bitness || 'Unknown';
+                if (ch.model) model = ch.model;
+                if (ch.platform) platform = ch.platform;
+                platform_version = ch.platformVersion || 'Unknown';
+                if (ch.formFactors) form_factors = ch.formFactors;
+                
+                // Extract best brand from brands array
+                if (ch.brands && ch.brands.length > 0) {
+                    const validBrand = ch.brands.find(b => !b.brand.includes('Not') && !b.brand.includes('Brand'));
+                    if (validBrand) {
+                        browser = validBrand.brand;
+                        browser_version = validBrand.version;
+                    }
                 }
-            }
 
-            if (ch.mobile) device_type = 'mobile';
-            else if (form_factors.includes('Tablet')) device_type = 'tablet';
-            
-            // Assign confidence
-            if (model !== 'Unknown' && model !== '') {
-                confidence = 'HIGH';
-                console.log(`[Device Profiling] UA-CH exact model received: ${model}`);
+                if (ch.mobile) device_type = 'mobile';
+                else if (form_factors.includes('Tablet')) device_type = 'tablet';
+                
+                if (model !== 'Unknown' && model !== '') {
+                    confidence = 'HIGH';
+                } else {
+                    confidence = 'MEDIUM';
+                }
             } else {
-                confidence = 'MEDIUM';
+                console.log(`[Device Profiling] Fallback to legacy parsing for session ${sessionId}`);
+                if (brand !== 'Unknown' && os !== 'Unknown' && browser !== 'Unknown') confidence = 'MEDIUM';
             }
-        } else {
-            console.log(`[Device Profiling] Fallback to device-detector-js for session ${sessionId}`);
-            brand = (uaResult.device && uaResult.device.brand) ? uaResult.device.brand : 'Unknown';
-            model = (uaResult.device && uaResult.device.model) ? uaResult.device.model : 'Unknown';
-            os = (uaResult.os && uaResult.os.name) ? uaResult.os.name : 'Unknown';
-            os_version = (uaResult.os && uaResult.os.version) ? String(uaResult.os.version) : 'Unknown';
-            browser = (uaResult.client && uaResult.client.name) ? uaResult.client.name : 'Unknown';
-            browser_version = (uaResult.client && uaResult.client.version) ? String(uaResult.client.version) : 'Unknown';
-            device_type = (uaResult.device && uaResult.device.type) ? uaResult.device.type : 'desktop';
+
+            // Final gap fills
+            if (os === 'Unknown') os = platform !== 'Unknown' ? platform : 'Unknown';
             
-            if (brand !== 'Unknown' && os !== 'Unknown' && browser !== 'Unknown') confidence = 'MEDIUM';
+            console.log(`[Device Profiling] Device model confidence: ${confidence}`);
+
+            const profile = {
+                device_type,
+                brand,
+                model,
+                marketing_name: resolveMarketingName(model),
+                os,
+                os_version,
+                browser,
+                browser_version,
+                platform,
+                platform_version,
+                architecture,
+                bitness,
+                form_factors,
+                screen: deviceData.screen || 'Unknown',
+                device_pixel_ratio: deviceData.devicePixelRatio || 1,
+                language: deviceData.language || 'Unknown',
+                timezone: deviceData.timezone || 'Unknown',
+                touch_points: deviceData.maxTouchPoints || 0,
+                hardware_concurrency: deviceData.hardwareConcurrency || 'Unknown',
+                device_memory_gb: deviceData.deviceMemory || 'Unknown',
+                network_type: deviceData.networkType || 'Unknown',
+                ua_source,
+                device_model_confidence: confidence
+            };
+
+            profile.device_profile_id = generateDeviceProfileId(profile);
+            session.device_profile = profile;
         }
-
-        // Fill gaps if UA-CH was partial
-        if (os === 'Unknown') os = platform !== 'Unknown' ? platform : ((uaResult.os && uaResult.os.name) ? uaResult.os.name : 'Unknown');
-        if (brand === 'Unknown' || brand === '') brand = (uaResult.device && uaResult.device.brand) ? uaResult.device.brand : 'Unknown';
-        if (browser === 'Unknown' || browser === '') browser = (uaResult.client && uaResult.client.name) ? uaResult.client.name : 'Unknown';
-        if (browser_version === 'Unknown' || browser_version === '') browser_version = (uaResult.client && uaResult.client.version) ? String(uaResult.client.version) : 'Unknown';
-
-        console.log(`[Device Profiling] Device model confidence: ${confidence}`);
-
-        const profile = {
-            device_type,
-            brand,
-            model,
-            marketing_name: resolveMarketingName(model),
-            os,
-            os_version,
-            browser,
-            browser_version,
-            platform,
-            platform_version,
-            architecture,
-            bitness,
-            form_factors,
-            screen: deviceData.screen || 'Unknown',
-            device_pixel_ratio: deviceData.devicePixelRatio || 1,
-            language: deviceData.language || 'Unknown',
-            timezone: deviceData.timezone || 'Unknown',
-            touch_points: deviceData.maxTouchPoints || 0,
-            hardware_concurrency: deviceData.hardwareConcurrency || 'Unknown',
-            device_memory_gb: deviceData.deviceMemory || 'Unknown',
-            network_type: deviceData.networkType || 'Unknown',
-            ua_source,
-            device_model_confidence: confidence
-        };
-
-        profile.device_profile_id = generateDeviceProfileId(profile);
-        session.device_profile = profile;
+    } catch (profileError) {
+        console.error(`[Error] Device profile parsing failed for session ${sessionId}:`, profileError);
+        // We let the pre-populated "Unknown" defaults remain in the session object
     }
 
-    // Process GPS
-    if (latitude && longitude) {
-        console.log("GPS received:", latitude, longitude);
-        session.gps = `${latitude}, ${longitude}`;
-        console.log(`[Location Updated] Session: ${sessionId}, Method: GPS`);
-        
-        const geo = await reverseGeocode(latitude, longitude);
-        session.gps_address = geo.gps_address;
-        session.gps_city = geo.gps_city;
-        session.gps_region = geo.gps_region;
-        session.gps_country = geo.gps_country;
-        
-        session.final_city = geo.gps_city !== 'Unknown' ? geo.gps_city : session.ip_city;
-        session.final_region = geo.gps_region !== 'Unknown' ? geo.gps_region : session.ip_region;
-        session.final_country = geo.gps_country !== 'Unknown' ? geo.gps_country : session.ip_country;
-        session.location_source = "GPS";
-    } else if (error) {
-        session.gps = "denied or unavailable";
-        session.location_source = "IP";
-        console.log(`[Location Denied/Failed] Session: ${sessionId}, Error: ${error}`);
+    // Block 2: Process GPS (Wrapped in try/catch)
+    try {
+        if (latitude && longitude) {
+            console.log("GPS received:", latitude, longitude);
+            session.gps = `${latitude}, ${longitude}`;
+            console.log(`[Location Updated] Session: ${sessionId}, Method: GPS`);
+            
+            const geo = await reverseGeocode(latitude, longitude);
+            session.gps_address = geo.gps_address;
+            session.gps_city = geo.gps_city;
+            session.gps_region = geo.gps_region;
+            session.gps_country = geo.gps_country;
+            
+            session.final_city = geo.gps_city !== 'Unknown' ? geo.gps_city : session.ip_city;
+            session.final_region = geo.gps_region !== 'Unknown' ? geo.gps_region : session.ip_region;
+            session.final_country = geo.gps_country !== 'Unknown' ? geo.gps_country : session.ip_country;
+            session.location_source = "GPS";
+        } else if (error) {
+            session.gps = "denied or unavailable";
+            session.gps_address = "denied or unavailable";
+            session.location_source = "IP";
+            console.log(`[Location Denied/Failed] Session: ${sessionId}, Error: ${error}`);
+        } else {
+            // Failsafe in case nothing was passed
+            session.gps = "denied or unavailable";
+            session.gps_address = "denied or unavailable";
+            session.location_source = "IP";
+            console.log(`[Location] Neither GPS nor Error received for session: ${sessionId}`);
+        }
+    } catch (gpsError) {
+        console.error(`[Error] GPS processing failed for session ${sessionId}:`, gpsError);
+        session.gps = "error";
+        session.gps_address = "error";
     }
 
     res.json({ success: true });
