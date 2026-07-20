@@ -24,6 +24,95 @@ function getClientIp(req) {
     }
     return ip;
 }
+// Simple cache to prevent rate limits for identical IPs
+const geoCache = {};
+
+// Robust multi-API fallback strategy for IP Geolocation
+async function getGeoLocation(ip) {
+    // Return cached result if available
+    if (geoCache[ip]) return geoCache[ip];
+
+    // Default normalized structure
+    let result = { city: 'Unknown', region: 'Unknown', country: 'Unknown', isp: 'Unknown' };
+
+    // Helper for AbortController timeout (e.g. 3000ms)
+    const fetchWithTimeout = async (url, ms = 3000) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), ms);
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        return response;
+    };
+
+    try {
+        // 1st API: ipapi.co
+        const resp1 = await fetchWithTimeout(`https://ipapi.co/${ip}/json/`);
+        if (resp1.ok) {
+            const data1 = await resp1.json();
+            // Validate completeness of data
+            if (!data1.error && data1.city && data1.region) {
+                console.log(`Geo Source: ipapi.co for ${ip}`);
+                result = {
+                    city: data1.city || 'Unknown',
+                    region: data1.region || 'Unknown',
+                    country: data1.country_name || 'Unknown',
+                    isp: data1.org || 'Unknown'
+                };
+                geoCache[ip] = result;
+                return result;
+            }
+        }
+    } catch (e) { /* ignore and fallback */ }
+
+    console.log(`Fallback to ip-api.com triggered for ${ip}`);
+
+    try {
+        // 2nd API (Fallback): ip-api.com
+        const resp2 = await fetchWithTimeout(`http://ip-api.com/json/${ip}`);
+        if (resp2.ok) {
+            const data2 = await resp2.json();
+            if (data2.status === 'success' && data2.city) {
+                console.log(`Geo Source: ip-api.com for ${ip}`);
+                result = {
+                    city: data2.city || 'Unknown',
+                    region: data2.regionName || 'Unknown',
+                    country: data2.country || 'Unknown',
+                    isp: data2.isp || 'Unknown'
+                };
+                geoCache[ip] = result;
+                return result;
+            }
+        }
+    } catch (e) { /* ignore and fallback */ }
+    
+    console.log(`Fallback to ipinfo.io triggered for ${ip}`);
+
+    try {
+        // 3rd API (Fallback): ipinfo.io
+        const resp3 = await fetchWithTimeout(`https://ipinfo.io/${ip}/json`);
+        if (resp3.ok) {
+            const data3 = await resp3.json();
+            if (data3.city) {
+                console.log(`Geo Source: ipinfo.io for ${ip}`);
+                result = {
+                    city: data3.city || 'Unknown',
+                    region: data3.region || 'Unknown',
+                    country: data3.country || 'Unknown',
+                    isp: data3.org || 'Unknown' // Often contains ASN + ISP
+                };
+                geoCache[ip] = result;
+                return result;
+            }
+        }
+    } catch (e) {
+        console.error(`All IP Geolocation APIs failed for ${ip}`);
+    }
+
+    // Cache the unknown result to prevent spamming APIs on failure
+    geoCache[ip] = result;
+    return result;
+}
+
 // Root route for Railway public domain access
 app.get('/', (req, res) => {
     res.redirect('/track?user_id=DEMO001');
@@ -44,23 +133,8 @@ app.get('/track', async (req, res) => {
     const deviceStr = `${deviceBrand} / ${osName}`;
     const browserStr = uaResult.browser.name || 'Unknown';
 
-    // Get IP Geolocation using ipapi.co
-    let city = 'Unknown', region = 'Unknown', country = 'Unknown', isp = 'Unknown';
-    try {
-        // Fetch detailed IP info (free tier limited, fallback handled)
-        const geoResp = await fetch(`https://ipapi.co/${ip}/json/`);
-        if (geoResp.ok) {
-            const geoData = await geoResp.json();
-            if (!geoData.error) {
-                city = geoData.city || 'Unknown';
-                region = geoData.region || 'Unknown';
-                country = geoData.country_name || 'Unknown';
-                isp = geoData.org || 'Unknown';
-            }
-        }
-    } catch (e) {
-        console.error('IP Geolocation error:', e.message);
-    }
+    // Get normalized IP Geolocation with multi-API fallback
+    const { city, region, country, isp } = await getGeoLocation(ip);
 
     const sessionId = Date.now().toString() + Math.random().toString(36).substring(2, 8);
     
