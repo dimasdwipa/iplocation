@@ -113,6 +113,44 @@ async function getGeoLocation(ip) {
     return result;
 }
 
+// Reverse Geocoding using Nominatim API
+async function reverseGeocode(lat, lon) {
+    let result = {
+        gps_address: 'Unknown',
+        gps_city: 'Unknown',
+        gps_region: 'Unknown',
+        gps_country: 'Unknown'
+    };
+
+    try {
+        const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`;
+        
+        // Nominatim requires a User-Agent
+        const headers = { 'User-Agent': 'iplocation-poc/1.0' };
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        
+        const response = await fetch(url, { headers, signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+            const data = await response.json();
+            if (data && data.address) {
+                const addr = data.address;
+                result.gps_address = data.display_name || 'Unknown';
+                // Fallback for city logic: city -> town -> village -> county
+                result.gps_city = addr.city || addr.town || addr.village || addr.county || 'Unknown';
+                result.gps_region = addr.state || addr.region || 'Unknown';
+                result.gps_country = addr.country || 'Unknown';
+            }
+        }
+    } catch (error) {
+        console.error('Reverse Geocoding error:', error.message);
+    }
+    return result;
+}
+
 // Root route for Railway public domain access
 app.get('/', (req, res) => {
     res.redirect('/track?user_id=DEMO001');
@@ -143,15 +181,23 @@ app.get('/track', async (req, res) => {
         sessionId, // Kept for internal matching but omitted in output
         user_id: userId,
         ip: ip,
-        city: city,
-        region: region,
-        country: country,
+        ip_city: city,
+        ip_region: region,
+        ip_country: country,
         isp: isp,
         device: deviceStr,
         browser: browserStr,
         screen: "Pending...",
         timezone: "Pending...",
-        gps: "Pending..."
+        gps: "Pending...",
+        gps_address: "Pending...",
+        gps_city: "Pending...",
+        gps_region: "Pending...",
+        gps_country: "Pending...",
+        final_city: city,
+        final_region: region,
+        final_country: country,
+        location_source: "IP"
     };
 
     trackingData.push(sessionData);
@@ -166,7 +212,7 @@ app.get('/track', async (req, res) => {
 });
 
 // Endpoint to receive precise geolocation and enriched client data from frontend
-app.post('/api/location', (req, res) => {
+app.post('/api/location', async (req, res) => {
     const { sessionId, latitude, longitude, error, screen, timezone } = req.body;
     
     const session = trackingData.find(s => s.sessionId === sessionId);
@@ -177,9 +223,27 @@ app.post('/api/location', (req, res) => {
         if (latitude && longitude) {
             session.gps = `${latitude}, ${longitude}`;
             console.log(`[Location Updated] Session: ${sessionId}, Method: GPS`);
+            
+            console.log("Using GPS reverse geocoding");
+            const geo = await reverseGeocode(latitude, longitude);
+            
+            session.gps_address = geo.gps_address;
+            session.gps_city = geo.gps_city;
+            session.gps_region = geo.gps_region;
+            session.gps_country = geo.gps_country;
+            
+            // Final Location Logic
+            session.final_city = geo.gps_city !== 'Unknown' ? geo.gps_city : session.ip_city;
+            session.final_region = geo.gps_region !== 'Unknown' ? geo.gps_region : session.ip_region;
+            session.final_country = geo.gps_country !== 'Unknown' ? geo.gps_country : session.ip_country;
+            session.location_source = "GPS";
+            
+            console.log("Final location source:", session.location_source);
         } else if (error) {
             session.gps = "denied or unavailable";
+            session.location_source = "IP";
             console.log(`[Location Denied/Failed] Session: ${sessionId}, Error: ${error}`);
+            console.log("Final location source:", session.location_source);
         }
         res.json({ success: true });
     } else {
