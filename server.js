@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const UAParser = require('ua-parser-js');
+const DeviceDetector = require('device-detector-js');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -116,6 +116,7 @@ function resolveMarketingName(model) {
     if (!model || model === 'Unknown') return 'Unknown';
     // Explicit and maintainable mapping dictionary
     const mappings = {
+        'SM-S938B': 'Samsung Galaxy S25 Ultra',
         'SM-S928B': 'Samsung Galaxy S24 Ultra',
         'SM-S918B': 'Samsung Galaxy S23 Ultra',
         'SM-G998B': 'Samsung Galaxy S21 Ultra',
@@ -202,12 +203,16 @@ app.post('/api/location', async (req, res) => {
 
     // Process Device Profile Enrichment
     if (deviceData) {
-        // Fallback to UA string if UA-CH is completely absent
-        const parser = new UAParser(deviceData.userAgent || '');
-        const uaResult = parser.getResult();
+        // Parse User-Agent using DeviceDetector
+        const uaString = req.headers['user-agent'] || '';
+        const detector = new DeviceDetector();
+        const uaResult = detector.parse(uaString);
 
-        let brand = 'Unknown', model = 'Unknown', os = 'Unknown', os_version = 'Unknown';
-        let browser = 'Unknown', browser_version = 'Unknown', platform = 'Unknown';
+        const deviceBrand = (uaResult.device && uaResult.device.brand) ? uaResult.device.brand : 'Unknown';
+        const osName = (uaResult.os && uaResult.os.name) ? uaResult.os.name : 'Unknown';
+        const deviceStr = `${deviceBrand} / ${osName}`;
+        const browserStr = (uaResult.client && uaResult.client.name) ? uaResult.client.name : 'Unknown';
+        let browser_version = 'Unknown', platform = 'Unknown';
         let architecture = 'Unknown', bitness = 'Unknown', platform_version = 'Unknown';
         let form_factors = [];
         let device_type = 'desktop';
@@ -247,23 +252,23 @@ app.post('/api/location', async (req, res) => {
                 confidence = 'MEDIUM';
             }
         } else {
-            console.log(`[Device Profiling] Fallback to UA parser for session ${sessionId}`);
-            brand = uaResult.device.vendor || 'Unknown';
-            model = uaResult.device.model || 'Unknown';
-            os = uaResult.os.name || 'Unknown';
-            os_version = uaResult.os.version || 'Unknown';
-            browser = uaResult.browser.name || 'Unknown';
-            browser_version = uaResult.browser.version || 'Unknown';
-            device_type = uaResult.device.type || 'desktop';
+            console.log(`[Device Profiling] Fallback to device-detector-js for session ${sessionId}`);
+            brand = (uaResult.device && uaResult.device.brand) ? uaResult.device.brand : 'Unknown';
+            model = (uaResult.device && uaResult.device.model) ? uaResult.device.model : 'Unknown';
+            os = (uaResult.os && uaResult.os.name) ? uaResult.os.name : 'Unknown';
+            os_version = (uaResult.os && uaResult.os.version) ? String(uaResult.os.version) : 'Unknown';
+            browser = (uaResult.client && uaResult.client.name) ? uaResult.client.name : 'Unknown';
+            browser_version = (uaResult.client && uaResult.client.version) ? String(uaResult.client.version) : 'Unknown';
+            device_type = (uaResult.device && uaResult.device.type) ? uaResult.device.type : 'desktop';
             
             if (brand !== 'Unknown' && os !== 'Unknown' && browser !== 'Unknown') confidence = 'MEDIUM';
         }
 
         // Fill gaps if UA-CH was partial
-        if (os === 'Unknown') os = platform !== 'Unknown' ? platform : (uaResult.os.name || 'Unknown');
-        if (brand === 'Unknown') brand = uaResult.device.vendor || 'Unknown';
-        if (browser === 'Unknown') browser = uaResult.browser.name || 'Unknown';
-        if (browser_version === 'Unknown') browser_version = uaResult.browser.version || 'Unknown';
+        if (os === 'Unknown') os = platform !== 'Unknown' ? platform : ((uaResult.os && uaResult.os.name) ? uaResult.os.name : 'Unknown');
+        if (brand === 'Unknown' || brand === '') brand = (uaResult.device && uaResult.device.brand) ? uaResult.device.brand : 'Unknown';
+        if (browser === 'Unknown' || browser === '') browser = (uaResult.client && uaResult.client.name) ? uaResult.client.name : 'Unknown';
+        if (browser_version === 'Unknown' || browser_version === '') browser_version = (uaResult.client && uaResult.client.version) ? String(uaResult.client.version) : 'Unknown';
 
         console.log(`[Device Profiling] Device model confidence: ${confidence}`);
 
